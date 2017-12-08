@@ -6,7 +6,6 @@
   :dependencies [[org.clojure/clojure "1.9.0-alpha16"]
                  [cheshire "5.7.1"]
                  [clj-json-patch "0.1.4"]
-                 [org.eclipse.jetty.http2/http2-client "9.4.7.v20170914"]
                  [org.eclipse.jetty.websocket/websocket-client "9.4.7.v20170914"]
                  [hiccup "1.0.5"]
                  [ch.qos.logback/logback-classic "1.2.2"]

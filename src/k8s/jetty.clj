@@ -6,18 +6,17 @@
            [org.eclipse.jetty.websocket.api WebSocketListener Session WriteCallback RemoteEndpoint]
            [org.eclipse.jetty.websocket.client WebSocketClient ClientUpgradeRequest]
            [org.eclipse.jetty.util.ssl SslContextFactory]
-           [org.eclipse.jetty.http2.api Stream]
-           [org.eclipse.jetty.http2.api.server ServerSessionListener]
-           [org.eclipse.jetty.http2.frames DataFrame HeadersFrame]
+
+           [org.eclipse.jetty.client.api.Response]
 
            [org.eclipse.jetty.http MetaData HttpFields HttpURI HttpVersion]
            [org.eclipse.jetty.util FuturePromise Callback]
            [java.util.concurrent TimeUnit]
-           [org.eclipse.jetty.http2.client HTTP2Client]
 
            [java.nio.charset Charset])
   (:require [clojure.string :as str]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [clojure.java.io :as io]))
 
 (defn ssl-context []
   (let [sec (SslContextFactory.)]
@@ -32,6 +31,8 @@
   (if-let [ctx @ssl-ctx]
     ctx
     (reset! ssl-ctx (ssl-context))))
+
+
 
 
 (defn client [{insecure? :insecure?}]
@@ -74,6 +75,65 @@
       {:status (.getStatus resp)
        :headers headers
        :body (parse-body (:Content-Type headers) body)})))
+
+
+(defn read-lines [s]
+  (let [parts (str/split s #"\n")]
+    (if (str/ends-with? s "\n")
+      [parts nil]
+      [(butlast parts) (last parts)])))
+
+(read-lines "aaaa\nbbbb\nc")
+(read-lines "aaaa\nbbbb\n")
+
+(defn buf->str [buf]
+  (let [ba (byte-array (.remaining buf))]
+    (.get buf ba)
+    (String. ba "UTF-8")))
+
+
+(defn http-stream-listener
+  [on-message on-complete]
+  (let [tail (atom nil)]
+    (proxy
+        [org.eclipse.jetty.client.api.Response$Listener$Adapter] []
+      ;; onComplete(Result result)
+      (onComplete [res]
+        (println "on complete" res)
+        (on-complete res))
+
+      ;; Response response, java.nio.ByteBuffer content
+      (onContent [resp ^java.nio.ByteBuffer content cb]
+        ;; (println "onContent" resp content)
+        (let [s (str @tail (buf->str content))
+              [lines t] (read-lines s)]
+          (doseq [l lines] (on-message l))
+          (reset! tail t))
+        (.succeeded cb)))))
+
+
+(defn request-stream
+  [^HttpClient client
+   {uri :uri
+    params :params
+    on-complete :on-complete
+    on-message :on-message
+    headers :headers
+    method :method :as opts}]
+
+  (let [req (.newRequest client uri)]
+    (.method req (or "GET" method))
+
+    (when params
+      (doseq [[k v] params]
+        (.param req (name k) v)))
+
+    (when headers
+      (doseq [[k v] headers]
+        (.header req (name k) v)))
+
+    (.send req (http-stream-listener on-message on-complete))
+    req))
 
 (defn ws-client [{insecure? :insecure?}]
   (let [cl (if insecure?
@@ -131,60 +191,43 @@
       @p)))
 
 
-(defn http2-client
-  [{insecure? :insecure?
-    host :host
-    port :port}]
-  (let [cl (HTTP2Client.)]
-    (.start cl)
-    cl))
-
-(defn http2-listener []
-  (let [p (promise)
-        sb (StringBuilder.)]
-    [p (proxy [org.eclipse.jetty.http2.api.Stream$Listener$Adapter] []
-         (onData [^Stream stream
-                  ^DataFrame frame
-                  ^Callback callback]
-           (let [bs (byte-array (-> frame (.getData) (.remaining)))];)])
-             (-> frame (.getData) (.get bs))
-             (println "Data:" (String. bs))
-             (.succeeded callback))))]))
-
-(defn http2-request [client {uri :uri
-                             host :host
-                             port :port
-                             method :method}]
-  (let [method  (or "GET" method)
-        huri    (HttpURI. uri)
-        fields  (HttpFields.)
-        req     (org.eclipse.jetty.http.MetaData$Request.
-                 ^String method
-                 ^HttpURI huri
-                 HttpVersion/HTTP_2
-                 ^HttpFields fields)
-        headers (HeadersFrame. req nil true)
-        [p listener] (http2-listener)
-        pr (FuturePromise.)]
-    (.connect client
-              ;; ^SSLContextFactory (ensure-ssl-context)
-              ^java.net.InetSocketAddress (java.net.InetSocketAddress. host (or port 80))
-              (org.eclipse.jetty.http2.api.server.ServerSessionListener$Adapter.)
-              ^FuturePromise pr)
-    (let [session (.get pr 5 TimeUnit/SECONDS)]
-      (.newStream session headers (FuturePromise.) listener)
-      session)))
-
 (comment
+
+  (def http (client {:insecure? true}))
+  (.stop http)
 
   (.start http)
 
+  (def host "https://192.168.99.100:8443")
+
+  (def host "http://localhost:8001")
+
+  (def uri (str host "/api/v1/pods?watch=true"))
+
+  "https://<api-server>/api/v1/namespaces/default/pods/pg3-cleo-master-lightseagreen-363763885-0mbfz"
+
+  (def http (client {:insecure? true}))
+
+  (def rss
+    (request-stream http
+                    {:uri uri 
+                     :method "GET"
+                     :on-complete (fn [res] (println "STATUS:" (.getStatus res)))
+                     :on-message (fn [msg] (println "MESS:" msg))
+                     :headers {;;"Authorization" (str "Bearer " token)
+                               }}))
+
   (def result
-    (-> (.newRequest http "https://<api-server>/api/v1/namespaces/default/pods/pg3-cleo-master-lightseagreen-363763885-0mbfz")
+    (-> (.newRequest http uri)
         (.method "GET")
         (.header "Authorization"
-                 "Bearer <token>")
+                 (str "Bearer " token))
         (.send)))
+  
+  
+  rss
+
+ result
 
   (.getStatus result)
   (.toString result)
@@ -192,7 +235,8 @@
 
   (def cl (client {:insecure? true}))
 
-  (def token "????")
+  (def token "???")
+  
   (def api-server "????")
 
   (def rs (request cl
@@ -210,30 +254,25 @@
   (:body rs)
 
   (def wws (ws-client {:insecure? true}))
+
   (def wres
     (ws-request wws
-                {:uri (str "wss://<api-server>/api/v1/namespaces/default/pods/pg3-cleo-master-lightseagreen-363763885-0mbfz/exec?"
+                {:uri (str "wss://????/api/v1/namespaces/default/pods/pg3-cleo-master-lightseagreen-363763885-0mbfz/exec?"
                            "command=ls&command-lah"
                            "&container=pg&stderr=true&stdout=true")
                  :method "POST"
                  :headers {"Authorization" (str "Bearer " token)}}))
 
+
   wres
 
+  (def watchres
+    (ws-request wws
+                {:uri (str "wss://???/api/v1/pods?watch=true")
+                 :method "POST"
+                 :headers {"Authorization" (str "Bearer " token)}}))
 
-
-  (def http2 (http2-client {:insecure? true :host "localhost" :port 8001}))
-
-  http2
-
-  (def s
-    (http2-request http2 {:uri "http://localhost:8001/api/v1/pods?watch=true"
-                          :host "localhost"
-                          :port 8001
-                          :method "GET"}))
-
-  s
-
+  watchres
 
 
   )
