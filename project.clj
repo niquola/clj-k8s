@@ -14,5 +14,6 @@
                  [clj-jwt "0.1.1"]
                  [clj-time "0.13.0"]
                  [inflections "0.13.0"]
+                 [io.netty/netty-all "4.1.16.Final"]
                  [org.mortbay.jetty.alpn/alpn-boot "8.1.9.v20160720"]
                  [matcho "0.1.0-RC5"]])

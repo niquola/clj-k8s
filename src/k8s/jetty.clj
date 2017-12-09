@@ -214,7 +214,8 @@
                      :method "GET"
                      :on-complete (fn [res] (println "STATUS:" (.getStatus res)))
                      :on-message (fn [msg] (println "MESS:" msg))
-                     :headers {;;"Authorization" (str "Bearer " token)
+                     :headers {
+                               ;;"Authorization" (str "Bearer " token)
                                }}))
 
   (def result
@@ -223,7 +224,6 @@
         (.header "Authorization"
                  (str "Bearer " token))
         (.send)))
-  
   
   rss
 
